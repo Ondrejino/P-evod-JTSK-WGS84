@@ -52,11 +52,11 @@ with tab1:
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        jtsk_y = st.number_input("Souřadnice Y (S-JTSK)", value=-730744.68, step=10.0, format="%.2f")
+        jtsk_y = st.number_input("Souřadnice Y (S-JTSK)", value=-730744.68, step=10.0, format="%.3f")
     with col2:
-        jtsk_x = st.number_input("Souřadnice X (S-JTSK)", value=-1045566.67, step=10.0, format="%.2f")
+        jtsk_x = st.number_input("Souřadnice X (S-JTSK)", value=-1045566.67, step=10.0, format="%.3f")
     with col3:
-        jtsk_z = st.number_input("Výška Z (Bpv v metrech)", value=249.00, step=1.0, format="%.2f")
+        jtsk_z = st.number_input("Výška Z (Bpv v metrech)", value=249.00, step=1.0, format="%.3f")
         
     if st.button("Převést S-JTSK ➡️ WGS84", type="primary"):
         with st.spinner("Stahuji mřížky ČÚZK a počítám..."):
@@ -82,7 +82,7 @@ with tab2:
     with col5:
         wgs_lon_dec = st.number_input("Zeměpisná délka (Lon)", value=14.5931876, step=0.0001, format="%.7f")
     with col6:
-        wgs_alt_dec = st.number_input("GPS Výška (m)", value=293.00, step=1.0, format="%.2f")
+        wgs_alt_dec = st.number_input("GPS Výška (m)", value=293.00, step=1.0, format="%.3f")
         
     if st.button("Převést WGS84 (Desetinné) ➡️ S-JTSK", type="primary"):
         with st.spinner("Stahuji mřížky ČÚZK a počítám..."):
@@ -108,7 +108,7 @@ with tab3:
     with col_lon4: lon_dir = st.selectbox("Směr", ["E", "W"], key='lon_dir')
     
     st.markdown("Výška")
-    wgs_alt_dms = st.number_input("GPS Výška (m)", value=293.00, step=1.0, format="%.2f", key='alt_dms')
+    wgs_alt_dms = st.number_input("GPS Výška (m)", value=293.00, step=1.0, format="%.3f", key='alt_dms')
 
     if st.button("Převést WGS84 (DMS) ➡️ S-JTSK", type="primary", key="btn_dms"):
         lat_dec = dms_to_decimal(lat_deg, lat_min, lat_sec, lat_dir)
