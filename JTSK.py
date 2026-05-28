@@ -1,5 +1,10 @@
 import streamlit as st
+import pyproj
 from pyproj import Transformer
+
+# --- KRITICKÁ OPRAVA PRO ČR: ZAPNUTÍ SÍTĚ PRO STAŽENÍ NTv2 MŘÍŽEK A GEOIDU ---
+# Toto donutí pyproj stáhnout si přesný výškový model (vugtk) a polohovou mřížku.
+pyproj.network.set_network_enabled(active=True)
 
 # --- NASTAVENÍ STRÁNKY ---
 st.set_page_config(page_title="Geodetický Převodník 3D", layout="centered")
@@ -26,7 +31,7 @@ def dms_to_decimal(degrees, minutes, seconds, direction):
         decimal *= -1
     return decimal
 
-# --- INICIALIZACE TRANSFORMÁTORŮ (Oprava 3D výšek) ---
+# --- INICIALIZACE TRANSFORMÁTORŮ ---
 @st.cache_resource
 def get_transformers():
     # EPSG:5514+5705 = S-JTSK + Balt po vyrovnání (3D)
@@ -47,14 +52,15 @@ with tab1:
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        jtsk_y = st.number_input("Souřadnice Y (S-JTSK)", value=-600000.00, step=10.0, format="%.2f")
+        jtsk_y = st.number_input("Souřadnice Y (S-JTSK)", value=-730744.68, step=10.0, format="%.2f")
     with col2:
-        jtsk_x = st.number_input("Souřadnice X (S-JTSK)", value=-1050000.00, step=10.0, format="%.2f")
+        jtsk_x = st.number_input("Souřadnice X (S-JTSK)", value=-1045566.67, step=10.0, format="%.2f")
     with col3:
         jtsk_z = st.number_input("Výška Z (Bpv v metrech)", value=249.00, step=1.0, format="%.2f")
         
     if st.button("Převést S-JTSK ➡️ WGS84", type="primary"):
-        wgs_lon, wgs_lat, wgs_alt = transformer_to_wgs.transform(jtsk_y, jtsk_x, jtsk_z)
+        with st.spinner("Stahuji mřížky ČÚZK a počítám..."):
+            wgs_lon, wgs_lat, wgs_alt = transformer_to_wgs.transform(jtsk_y, jtsk_x, jtsk_z)
         st.success("✅ Převod dokončen!")
         st.markdown(f"""
         **Výstup WGS84 (Desetinné stupně):**
@@ -72,14 +78,15 @@ with tab2:
     st.subheader("WGS84 (Desetinné formáty) do S-JTSK")
     col4, col5, col6 = st.columns(3)
     with col4:
-        wgs_lat_dec = st.number_input("Zeměpisná šířka (Lat)", value=49.8248881, step=0.0001, format="%.7f")
+        wgs_lat_dec = st.number_input("Zeměpisná šířka (Lat)", value=50.0794503, step=0.0001, format="%.7f")
     with col5:
-        wgs_lon_dec = st.number_input("Zeměpisná délka (Lon)", value=15.3025219, step=0.0001, format="%.7f")
+        wgs_lon_dec = st.number_input("Zeměpisná délka (Lon)", value=14.5931876, step=0.0001, format="%.7f")
     with col6:
-        wgs_alt_dec = st.number_input("GPS Výška (m)", value=293.30, step=1.0, format="%.2f")
+        wgs_alt_dec = st.number_input("GPS Výška (m)", value=293.00, step=1.0, format="%.2f")
         
     if st.button("Převést WGS84 (Desetinné) ➡️ S-JTSK", type="primary"):
-        y_out, x_out, z_out = transformer_to_jtsk.transform(wgs_lon_dec, wgs_lat_dec, wgs_alt_dec)
+        with st.spinner("Stahuji mřížky ČÚZK a počítám..."):
+            y_out, x_out, z_out = transformer_to_jtsk.transform(wgs_lon_dec, wgs_lat_dec, wgs_alt_dec)
         st.success("✅ Převod dokončen!")
         st.markdown(f"**S-JTSK:** Y: `{y_out:.3f}` | X: `{x_out:.3f}` | Výška Bpv: `{z_out:.3f} m`")
 
@@ -88,26 +95,27 @@ with tab3:
     st.subheader("WGS84 (Stupně, Minuty, Vteřiny) do S-JTSK")
     st.markdown("Zeměpisná šířka (N/S)")
     col_lat1, col_lat2, col_lat3, col_lat4 = st.columns([1, 1, 1, 1])
-    with col_lat1: lat_deg = st.number_input("Stupně (°)", value=49, step=1, key='lat_d')
-    with col_lat2: lat_min = st.number_input("Minuty (')", value=49, step=1, key='lat_m')
-    with col_lat3: lat_sec = st.number_input("Vteřiny (\")", value=29.59716, step=0.01, key='lat_s', format="%.5f")
+    with col_lat1: lat_deg = st.number_input("Stupně (°)", value=50, step=1, key='lat_d')
+    with col_lat2: lat_min = st.number_input("Minuty (')", value=4, step=1, key='lat_m')
+    with col_lat3: lat_sec = st.number_input("Vteřiny (\")", value=46.02108, step=0.01, key='lat_s', format="%.5f")
     with col_lat4: lat_dir = st.selectbox("Směr", ["N", "S"], key='lat_dir')
 
     st.markdown("Zeměpisná délka (E/W)")
     col_lon1, col_lon2, col_lon3, col_lon4 = st.columns([1, 1, 1, 1])
-    with col_lon1: lon_deg = st.number_input("Stupně (°)", value=15, step=1, key='lon_d')
-    with col_lon2: lon_min = st.number_input("Minuty (')", value=18, step=1, key='lon_m')
-    with col_lon3: lon_sec = st.number_input("Vteřiny (\")", value=9.07884, step=0.01, key='lon_s', format="%.5f")
+    with col_lon1: lon_deg = st.number_input("Stupně (°)", value=14, step=1, key='lon_d')
+    with col_lon2: lon_min = st.number_input("Minuty (')", value=35, step=1, key='lon_m')
+    with col_lon3: lon_sec = st.number_input("Vteřiny (\")", value=35.47536, step=0.01, key='lon_s', format="%.5f")
     with col_lon4: lon_dir = st.selectbox("Směr", ["E", "W"], key='lon_dir')
     
     st.markdown("Výška")
-    wgs_alt_dms = st.number_input("GPS Výška (m)", value=293.30, step=1.0, format="%.2f", key='alt_dms')
+    wgs_alt_dms = st.number_input("GPS Výška (m)", value=293.00, step=1.0, format="%.2f", key='alt_dms')
 
-    if st.button("Převést WGS84 (DMS) ➡️ S-JTSK", type="primary"):
+    if st.button("Převést WGS84 (DMS) ➡️ S-JTSK", type="primary", key="btn_dms"):
         lat_dec = dms_to_decimal(lat_deg, lat_min, lat_sec, lat_dir)
         lon_dec = dms_to_decimal(lon_deg, lon_min, lon_sec, lon_dir)
         
-        y_out, x_out, z_out = transformer_to_jtsk.transform(lon_dec, lat_dec, wgs_alt_dms)
+        with st.spinner("Stahuji mřížky ČÚZK a počítám..."):
+            y_out, x_out, z_out = transformer_to_jtsk.transform(lon_dec, lat_dec, wgs_alt_dms)
         st.success("✅ Převod dokončen!")
         st.markdown(f"**Vypočtené desetinné stupně:** Lat: `{lat_dec:.7f}`, Lon: `{lon_dec:.7f}`")
         st.markdown(f"**S-JTSK:** Y: `{y_out:.3f}` | X: `{x_out:.3f}` | Výška Bpv: `{z_out:.3f} m`")
