@@ -79,8 +79,8 @@ if uploaded_file is not None:
         df_vysledky = df_vysledky.sort_values(by="Spolehlivost (R²)", ascending=False).reset_index(drop=True)
         
         # Nastavení hezkého formátování tabulky ve Streamlitu
-        st.dataframe(
-            df_vysledky.style.format({"Spolehlivost (R²)": "{:.4f}"}).background_gradient(subset=["Spolehlivost (R²)"], cmap="Greens"),
+       st.dataframe(
+            df_vysledky.style.format({"Spolehlivost (R²)": "{:.4f}"}),
             use_container_width=True,
             height=400
         )
