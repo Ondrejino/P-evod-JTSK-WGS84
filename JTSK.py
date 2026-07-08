@@ -8,40 +8,22 @@ from sklearn.linear_model import LassoCV
 st.set_page_config(page_title="Geotechnická AI Analýza", layout="wide")
 st.title("🧠 Geotechnický AI analyzátor hodnoty Kb")
 
-# --- NAHRÁNÍ SOUBORU ---
-st.markdown("Nahraj svoje CSV. Aplikace si sama poradí s tečkama, čárkama, středníkama i kódováním.")
+st.markdown("Nahraj svoje CSV. Tento kód obsahuje agresivní čištění, které se s formátováním Excelu nemaže.")
 uploaded_file = st.file_uploader("Vyber CSV soubor", type=['csv'])
 
 if uploaded_file is not None:
-    # 1. NEPRŮSTŘELNÉ NAČTENÍ DAT
+    # 1. NAČTENÍ DAT (automatická detekce oddělovače)
     try:
-        df = pd.read_csv(uploaded_file, sep=';', encoding='utf-8')
-    except UnicodeDecodeError:
+        df = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='utf-8')
+    except:
         uploaded_file.seek(0)
-        df = pd.read_csv(uploaded_file, sep=';', encoding='windows-1250')
+        df = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='windows-1250')
     
-    # Pokud se to načetlo jen jako 1 sloupec, Excel použil jako oddělovač čárku
-    if len(df.columns) == 1:
-        uploaded_file.seek(0)
-        try:
-            df = pd.read_csv(uploaded_file, sep=',', encoding='utf-8')
-        except UnicodeDecodeError:
-            uploaded_file.seek(0)
-            df = pd.read_csv(uploaded_file, sep=',', encoding='windows-1250')
-
-    # 2. FOOLPROOF ČIŠTĚNÍ DESETINNÝCH ČÁREK A TEČEK
-    for col in df.columns:
-        if df[col].dtype == 'object':
-            # Nahradíme textové čárky za tečky a převedeme na čísla (texty jako STA01 ignoruje)
-            df[col] = df[col].astype(str).str.replace(',', '.')
-            df[col] = pd.to_numeric(df[col], errors='ignore')
-
-    st.write("### Náhled tvých dat (opraveno)")
+    st.write("### 1. Náhled surových dat (před čištěním)")
     st.dataframe(df.head(5), use_container_width=True)
 
     # --- BOČNÍ PANEL: PŘIŘAZENÍ SLOUPCŮ ---
     st.sidebar.header("1. Přiřazení sloupců")
-    st.sidebar.markdown("Kde je co?")
     cols = df.columns.tolist()
 
     col_edef2 = st.sidebar.selectbox("Kde je Edef2?", cols, index=1 if len(cols)>1 else 0)
@@ -50,13 +32,34 @@ if uploaded_file is not None:
     col_obj = st.sidebar.selectbox("Kde je Ro d?", cols, index=min(4, len(cols)-1))
     col_kb = st.sidebar.selectbox("Kde je Kb?", cols, index=min(6, len(cols)-1))
 
-    # Připravíme modelová data a vyhodíme to, co se nepovedlo převést na čísla
+    # --- AGRESIVNÍ ČIŠTĚNÍ DAT (BULDOZER) ---
     df_model = df[[col_edef2, col_evd, col_vlhkost, col_obj, col_kb]].copy()
-    df_model = df_model.apply(pd.to_numeric, errors='coerce').dropna()
+    
+    def force_numeric(series):
+        # Převede na text, smaže všechny mezery, nahradí čárky za tečky a vynutí číslo
+        s = series.astype(str).str.replace(' ', '', regex=False).str.replace(',', '.', regex=False)
+        return pd.to_numeric(s, errors='coerce')
 
-    if len(df_model) < 20:
-        st.warning("Po vyčištění dat zbylo málo řádků. Zkontroluj přiřazení sloupců vlevo.")
+    for col in df_model.columns:
+        df_model[col] = force_numeric(df_model[col])
+    
+    pocet_pred = len(df_model)
+    df_model = df_model.dropna()
+    pocet_po = len(df_model)
+
+    # --- DEBUGGING (Když se to zase posere) ---
+    if pocet_po < 20:
+        st.error(f"A sakra! Zbylo jen {pocet_po} z {pocet_pred} řádků. Něco blokuje převod na čísla.")
+        st.markdown("Podívej se do tabulky níže. Sloupce s `(Zkouška)` ukazují, co z toho Python udělal. Kde je **NaN**, tam narazil na znak, který nešlo převést na číslo (např. text v číselném sloupci).")
+        
+        df_debug = df[[col_edef2, col_evd, col_vlhkost, col_obj, col_kb]].copy()
+        for col in df_debug.columns:
+            df_debug[f"{col} (Zkouška)"] = force_numeric(df_debug[col])
+            
+        st.dataframe(df_debug, use_container_width=True)
         st.stop()
+    else:
+        st.success(f"Data vyčištěna! Připraveno {pocet_po} z {pocet_pred} řádků k analýze.")
 
     # --- BOČNÍ PANEL: LOGICKÉ TŘÍDĚNÍ ---
     st.sidebar.header("2. Nastavení třídění")
@@ -87,7 +90,7 @@ if uploaded_file is not None:
             df_subset = df_model[df_model['Kategorie'] == kategorie].copy()
             
             if len(df_subset) < 10:
-                st.warning(f"Tady je jen {len(df_subset)} řádků. Zkus posunout slidery vlevo.")
+                st.warning(f"V této skupině je jen {len(df_subset)} řádků. Zkus posunout slidery vlevo.")
                 continue
                 
             st.write(f"Analyzuji na **{len(df_subset)} řádcích** dat:")
@@ -125,6 +128,6 @@ if uploaded_file is not None:
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("Algoritmus u týhle skupiny nenašel dost silnou závislost.")
+                st.info("Algoritmus u této skupiny nenašel dost silnou závislost.")
 else:
     st.info("Čekám na nahrání dat...")
