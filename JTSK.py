@@ -1,121 +1,114 @@
 import streamlit as st
-import pyproj
-from pyproj import Transformer
-
-# --- KRITICKÁ OPRAVA PRO ČR: ZAPNUTÍ SÍTĚ PRO STAŽENÍ NTv2 MŘÍŽEK A GEOIDU ---
-# Toto donutí pyproj stáhnout si přesný výškový model (vugtk) a polohovou mřížku.
-pyproj.network.set_network_enabled(active=True)
+import pandas as pd
+import numpy as np
+import plotly.express as px
+from sklearn.preprocessing import PolynomialFeatures, StandardScaler
+from sklearn.linear_model import LassoCV
 
 # --- NASTAVENÍ STRÁNKY ---
-st.set_page_config(page_title="Geodetický Převodník 3D", layout="centered")
-st.title("🌍 Ultimátní 3D Převodník: S-JTSK ↔ WGS84")
+st.set_page_config(page_title="AI Analýza Kb", layout="wide")
+st.title("🧠 Geotechnický AI analyzátor hodnoty Kb")
 
-# --- POMOCNÉ FUNKCE ---
-def decimal_to_dms(decimal_degree, is_lat):
-    """Převede desetinné stupně (DD) na Stupně, minuty, vteřiny (DMS)."""
-    if is_lat:
-        direction = 'N' if decimal_degree >= 0 else 'S'
-    else:
-        direction = 'E' if decimal_degree >= 0 else 'W'
+# --- NAČTENÍ DAT (Zde si uprav pro své CSV) ---
+@st.cache_data
+def load_data():
+    # Nasimulovaná data (nahraď pd.read_csv('tvoje_data.csv'))
+    np.random.seed(42)
+    return pd.DataFrame({
+        'Edef2': np.random.uniform(20, 80, 200),
+        'Evd': np.random.uniform(15, 60, 200),
+        'vlhkost': np.random.uniform(3, 12, 200),
+        'max_obj_hmotnost': np.random.uniform(1900, 2200, 200),
+        'Kb': np.random.uniform(0.9, 1.05, 200)
+    })
+
+df = load_data()
+
+# --- BOČNÍ PANEL (OVLÁDÁNÍ) ---
+st.sidebar.header("⚙️ Nastavení logického třídění")
+
+# Výběr, podle čeho chceme data dělit
+tridici_sloupec = st.sidebar.selectbox(
+    "Podle čeho chceš data rozdělit na segmenty?", 
+    options=['vlhkost', 'max_obj_hmotnost']
+)
+
+# Dynamické posuvníky podle vybraného sloupce
+min_val = float(df[tridici_sloupec].min())
+max_val = float(df[tridici_sloupec].max())
+
+st.sidebar.markdown(f"**Hranice pro {tridici_sloupec}**")
+mezni_hodnota_1 = st.sidebar.slider("Hranice mezi Nízkou a Střední:", min_val, max_val, min_val + (max_val-min_val)*0.33)
+mezni_hodnota_2 = st.sidebar.slider("Hranice mezi Střední a Vysokou:", min_val, max_val, min_val + (max_val-min_val)*0.66)
+
+# Logika rozdělení
+hranice = [min_val - 1, mezni_hodnota_1, mezni_hodnota_2, max_val + 1]
+stitky = ['Nízká', 'Střední', 'Vysoká']
+df['Kategorie'] = pd.cut(df[tridici_sloupec], bins=hranice, labels=stitky)
+
+# --- HLAVNÍ PLOCHA ---
+col1, col2, col3 = st.columns(3)
+col1.metric("Celkem řádků", len(df))
+col2.metric("Počet kategorií", len(stitky))
+col3.metric("Cílová hodnota", "Kb")
+
+st.markdown("---")
+st.subheader("🔍 Výsledky Lasso regrese pro jednotlivé segmenty")
+
+# Analyzujeme každou kategorii
+tabs = st.tabs(stitky)
+
+for i, kategorie in enumerate(stitky):
+    with tabs[i]:
+        df_subset = df[df['Kategorie'] == kategorie].copy()
         
-    abs_dd = abs(decimal_degree)
-    degrees = int(abs_dd)
-    minutes = int((abs_dd - degrees) * 60)
-    seconds = (abs_dd - degrees - minutes/60) * 3600
-    return f"{degrees}° {minutes}' {seconds:.5f}\" {direction}"
-
-def dms_to_decimal(degrees, minutes, seconds, direction):
-    """Převede Stupně, minuty, vteřiny (DMS) na desetinné stupně (DD)."""
-    decimal = float(degrees) + (float(minutes) / 60) + (float(seconds) / 3600)
-    if direction in ['S', 'W']:
-        decimal *= -1
-    return decimal
-
-# --- INICIALIZACE TRANSFORMÁTORŮ ---
-@st.cache_resource
-def get_transformers():
-    # EPSG:5514+5705 = S-JTSK + Balt po vyrovnání (3D)
-    # EPSG:4979 = WGS84 3D
-    t_to_wgs = Transformer.from_crs("EPSG:5514+5705", "EPSG:4979", always_xy=True)
-    t_to_jtsk = Transformer.from_crs("EPSG:4979", "EPSG:5514+5705", always_xy=True)
-    return t_to_wgs, t_to_jtsk
-
-transformer_to_wgs, transformer_to_jtsk = get_transformers()
-
-# --- UŽIVATELSKÉ ROZHRANÍ ---
-tab1, tab2, tab3 = st.tabs(["➡️ S-JTSK na WGS84", "⬅️ WGS84 (Desetinné) na S-JTSK", "⬅️ WGS84 (Stupně/Minuty) na S-JTSK"])
-
-# ZÁLOŽKA 1: S-JTSK -> WGS84
-with tab1:
-    st.subheader("Převod z Křováka (S-JTSK) do GPS (WGS84)")
-    st.info("Osa Y a X se v S-JTSK zadává se ZÁPORNÝM znaménkem. Výška Z je v metrech n. m. (Bpv).")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        jtsk_y = st.number_input("Souřadnice Y (S-JTSK)", value=-730744.68, step=10.0, format="%.3f")
-    with col2:
-        jtsk_x = st.number_input("Souřadnice X (S-JTSK)", value=-1045566.67, step=10.0, format="%.3f")
-    with col3:
-        jtsk_z = st.number_input("Výška Z (Bpv v metrech)", value=249.00, step=1.0, format="%.3f")
+        if len(df_subset) < 10:
+            st.warning(f"V této kategorii je příliš málo dat ({len(df_subset)} řádků). Uprav posuvníky.")
+            continue
+            
+        st.write(f"Analyzuji **{len(df_subset)} řádků** dat...")
         
-    if st.button("Převést S-JTSK ➡️ WGS84", type="primary"):
-        with st.spinner("Stahuji mřížky ČÚZK a počítám..."):
-            wgs_lon, wgs_lat, wgs_alt = transformer_to_wgs.transform(jtsk_y, jtsk_x, jtsk_z)
-        st.success("✅ Převod dokončen!")
-        st.markdown(f"""
-        **Výstup WGS84 (Desetinné stupně):**
-        * **Lat (Šířka):** `{wgs_lat:.7f}`
-        * **Lon (Délka):** `{wgs_lon:.7f}`
-        * **Elipsoidická výška:** `{wgs_alt:.3f} m`
+        # Příprava proměnných (vše kromě Kb a Kategorizačních sloupců)
+        X = df_subset[['Edef2', 'Evd', 'vlhkost', 'max_obj_hmotnost']].drop(columns=[tridici_sloupec])
+        y = df_subset['Kb']
         
-        **Výstup WGS84 (Stupně/Minuty/Vteřiny):**
-        * **Lat:** `{decimal_to_dms(wgs_lat, is_lat=True)}`
-        * **Lon:** `{decimal_to_dms(wgs_lon, is_lat=False)}`
-        """)
-
-# ZÁLOŽKA 2: WGS84 (Desetinné) -> S-JTSK
-with tab2:
-    st.subheader("WGS84 (Desetinné formáty) do S-JTSK")
-    col4, col5, col6 = st.columns(3)
-    with col4:
-        wgs_lat_dec = st.number_input("Zeměpisná šířka (Lat)", value=50.0794503, step=0.0001, format="%.7f")
-    with col5:
-        wgs_lon_dec = st.number_input("Zeměpisná délka (Lon)", value=14.5931876, step=0.0001, format="%.7f")
-    with col6:
-        wgs_alt_dec = st.number_input("GPS Výška (m)", value=293.00, step=1.0, format="%.3f")
+        # AI Srandičky (Mocniny a křížení)
+        poly = PolynomialFeatures(degree=2, include_bias=False)
+        X_poly = poly.fit_transform(X)
+        vsechny_kombinace = poly.get_feature_names_out(X.columns)
         
-    if st.button("Převést WGS84 (Desetinné) ➡️ S-JTSK", type="primary"):
-        with st.spinner("Stahuji mřížky ČÚZK a počítám..."):
-            y_out, x_out, z_out = transformer_to_jtsk.transform(wgs_lon_dec, wgs_lat_dec, wgs_alt_dec)
-        st.success("✅ Převod dokončen!")
-        st.markdown(f"**S-JTSK:** Y: `{y_out:.3f}` | X: `{x_out:.3f}` | Výška Bpv: `{z_out:.3f} m`")
-
-# ZÁLOŽKA 3: WGS84 (DMS) -> S-JTSK
-with tab3:
-    st.subheader("WGS84 (Stupně, Minuty, Vteřiny) do S-JTSK")
-    st.markdown("Zeměpisná šířka (N/S)")
-    col_lat1, col_lat2, col_lat3, col_lat4 = st.columns([1, 1, 1, 1])
-    with col_lat1: lat_deg = st.number_input("Stupně (°)", value=50, step=1, key='lat_d')
-    with col_lat2: lat_min = st.number_input("Minuty (')", value=4, step=1, key='lat_m')
-    with col_lat3: lat_sec = st.number_input("Vteřiny (\")", value=46.02108, step=0.01, key='lat_s', format="%.5f")
-    with col_lat4: lat_dir = st.selectbox("Směr", ["N", "S"], key='lat_dir')
-
-    st.markdown("Zeměpisná délka (E/W)")
-    col_lon1, col_lon2, col_lon3, col_lon4 = st.columns([1, 1, 1, 1])
-    with col_lon1: lon_deg = st.number_input("Stupně (°)", value=14, step=1, key='lon_d')
-    with col_lon2: lon_min = st.number_input("Minuty (')", value=35, step=1, key='lon_m')
-    with col_lon3: lon_sec = st.number_input("Vteřiny (\")", value=35.47536, step=0.01, key='lon_s', format="%.5f")
-    with col_lon4: lon_dir = st.selectbox("Směr", ["E", "W"], key='lon_dir')
-    
-    st.markdown("Výška")
-    wgs_alt_dms = st.number_input("GPS Výška (m)", value=293.00, step=1.0, format="%.3f", key='alt_dms')
-
-    if st.button("Převést WGS84 (DMS) ➡️ S-JTSK", type="primary", key="btn_dms"):
-        lat_dec = dms_to_decimal(lat_deg, lat_min, lat_sec, lat_dir)
-        lon_dec = dms_to_decimal(lon_deg, lon_min, lon_sec, lon_dir)
+        # Škálování dat (nutnost pro Lasso)
+        scaler = StandardScaler()
+        X_poly_scaled = scaler.fit_transform(X_poly)
         
-        with st.spinner("Stahuji mřížky ČÚZK a počítám..."):
-            y_out, x_out, z_out = transformer_to_jtsk.transform(lon_dec, lat_dec, wgs_alt_dms)
-        st.success("✅ Převod dokončen!")
-        st.markdown(f"**Vypočtené desetinné stupně:** Lat: `{lat_dec:.7f}`, Lon: `{lon_dec:.7f}`")
-        st.markdown(f"**S-JTSK:** Y: `{y_out:.3f}` | X: `{x_out:.3f}` | Výška Bpv: `{z_out:.3f} m`")
+        # Lasso model hledá korelaci
+        lasso = LassoCV(cv=3, random_state=42, max_iter=10000)
+        lasso.fit(X_poly_scaled, y)
+        
+        # Vytažení nejlepších závislostí
+        vysledky = []
+        for koeficient, nazev in zip(lasso.coef_, vsechny_kombinace):
+            if abs(koeficient) > 0.0001:  # Vyřadíme to, co AI označila za zbytečné
+                vysledky.append({"Proměnná (Kombinace)": nazev, "Vliv na Kb (Váha)": koeficient})
+                
+        if vysledky:
+            df_vysledky = pd.DataFrame(vysledky)
+            # Seřazení od největšího vlivu (absolutní hodnota)
+            df_vysledky['Abs Vliv'] = df_vysledky['Vliv na Kb (Váha)'].abs()
+            df_vysledky = df_vysledky.sort_values(by='Abs Vliv', ascending=False).drop(columns=['Abs Vliv'])
+            
+            # Cool vizualizace pomocí Plotly
+            fig = px.bar(
+                df_vysledky, 
+                x="Vliv na Kb (Váha)", 
+                y="Proměnná (Kombinace)", 
+                orientation='h',
+                title=f"Co nejvíce ovlivňuje Kb (Segment: {kategorie} {tridici_sloupec})",
+                color="Vliv na Kb (Váha)",
+                color_continuous_scale=px.colors.diverging.RdBu
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            st.dataframe(df_vysledky, use_container_width=True)
+        else:
+            st.info("Algoritmus nenašel žádnou silnou matematickou závislost. Zkus změnit rozdělení tříd.")
