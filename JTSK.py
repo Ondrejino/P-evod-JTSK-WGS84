@@ -3,10 +3,11 @@ import pandas as pd
 import itertools
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
+import numpy as np
 
-st.set_page_config(page_title="Hledání nejlepší rovnice", layout="wide")
-st.title("🤖 Automatické hledání vícenásobné regrese")
-st.markdown("Tento kód zkouší **všechny možné kombinace více sloupců najednou** (od 1 až po všechny) a hledá tu s nejvyšším R².")
+st.set_page_config(page_title="AI Analýza & Extrémy", layout="wide")
+st.title("🤖 Inteligentní hledání korelací a extrémů")
+st.markdown("Automaticky zkouší dynamické řezy v datech a detekuje hodnoty, které kazí korelaci.")
 
 uploaded_file = st.file_uploader("Nahraj tvůj soubor (Sešit1.csv)", type=['csv'])
 
@@ -27,66 +28,132 @@ if uploaded_file is not None:
             df[col] = pd.to_numeric(df[col], errors='coerce')
             
     df = df.dropna()
-    st.success(f"Načteno a vyčištěno: {len(df)} řádků.")
-
-    # Výběr sloupců
-    cols = df.columns.tolist()
     
+    cols = df.columns.tolist()
     col1, col2 = st.columns(2)
     with col1:
         idx_kb = cols.index('Kb') if 'Kb' in cols else len(cols)-1
-        target = st.selectbox("Co počítáme (Cílová hodnota Y):", cols, index=idx_kb)
-        
+        target = st.selectbox("Cílová hodnota (Y):", cols, index=idx_kb)
     with col2:
         default_features = [c for c in cols if c != target and c != 'w*w']
-        features = st.multiselect("Z čeho můžeme počítat (Vstupní X):", cols, default=default_features)
+        features = st.multiselect("Vstupní hodnoty (X):", cols, default=default_features)
 
     if features:
         st.markdown("---")
-        st.subheader(f"🏆 Žebříček nejlepších rovnic pro výpočet {target}")
         
-        y = df[target]
         vysledky = []
         
-        # Jádro pudla: Itertools vyzkouší kombinace 1 sloupce, pak 2, pak 3, atd.
-        for pocet_promennych in range(1, len(features) + 1):
-            for kombinace in itertools.combinations(features, pocet_promennych):
-                X_subset = df[list(kombinace)]
+        # Funkce pro výpočet regrese vč. detekce extrémů
+        def analyzuj_segment(df_vzorek, nazev_segmentu):
+            # Musí zbýt aspoň 6 řádků, aby mělo smysl něco vyhazovat a počítat
+            if len(df_vzorek) < 6:
+                return
                 
-                # Výpočet regrese pro danou skupinu sloupců
-                model = LinearRegression()
-                model.fit(X_subset, y)
-                y_pred = model.predict(X_subset)
-                
-                r2 = r2_score(y, y_pred)
-                
-                # Sestavení textu rovnice ve formátu pro Excel
-                casti_rovnice = []
-                for koeficient, nazev_sloupce in zip(model.coef_, kombinace):
-                    casti_rovnice.append(f"{koeficient:+.4f}*{nazev_sloupce}")
-                
-                text_rovnice = f"={model.intercept_:.4f} " + " ".join(casti_rovnice)
-                
-                vysledky.append({
-                    "Počet parametrů": pocet_promennych,
-                    "Zahrnuté sloupce": ", ".join(kombinace),
-                    "Spolehlivost (R²)": r2,
-                    "Přesná rovnice": text_rovnice
-                })
-                
-        # Zobrazení výsledků v tabulce, seřazeno od nejlepšího R²
-        df_vysledky = pd.DataFrame(vysledky)
-        df_vysledky = df_vysledky.sort_values(by="Spolehlivost (R²)", ascending=False).reset_index(drop=True)
+            y = df_vzorek[target]
+            
+            for pocet_promennych in range(1, len(features) + 1):
+                for kombinace in itertools.combinations(features, pocet_promennych):
+                    X_subset = df_vzorek[list(kombinace)]
+                    
+                    if X_subset.std().min() == 0:
+                        continue
+                        
+                    # 1. KROK: Výpočet se všemi daty v segmentu
+                    model = LinearRegression()
+                    model.fit(X_subset, y)
+                    y_pred = model.predict(X_subset)
+                    r2_puvodni = r2_score(y, y_pred)
+                    
+                    casti = [f"{k:+.4f}*{n}" for k, n in zip(model.coef_, kombinace)]
+                    rovnice = f"={model.intercept_:.4f} " + " ".join(casti)
+                    
+                    vysledky.append({
+                        "Skupina": nazev_segmentu,
+                        "R² (Spolehlivost)": r2_puvodni,
+                        "Odstraněno extrémů": 0,
+                        "Počet dat": len(df_vzorek),
+                        "Parametry": ", ".join(kombinace),
+                        "Rovnice pro Excel": rovnice
+                    })
+                    
+                    # 2. KROK: Hledání a odstranění extrémů (Outliers)
+                    rezidua = np.abs(y - y_pred)
+                    odchylka = rezidua.std()
+                    # Identifikace bodů, které ustřelily o více než 1.5x průměrnou chybu
+                    outlier_mask = rezidua > (1.5 * odchylka)
+                    pocet_outlieru = outlier_mask.sum()
+                    
+                    # Pokud se našlo 1 až 3 extrémy a po smazání nám zbydou aspoň 4 body
+                    if 0 < pocet_outlieru <= 3 and (len(df_vzorek) - pocet_outlieru) >= 4:
+                        df_ciste = df_vzorek[~outlier_mask]
+                        X_ciste = df_ciste[list(kombinace)]
+                        y_ciste = df_ciste[target]
+                        
+                        model_cisty = LinearRegression()
+                        model_cisty.fit(X_ciste, y_ciste)
+                        y_pred_cisty = model_cisty.predict(X_ciste)
+                        r2_cisty = r2_score(y_ciste, y_pred_cisty)
+                        
+                        # Zapsat jen tehdy, pokud to vyhození reálně zlepšilo model
+                        if r2_cisty > r2_puvodni:
+                            casti_ciste = [f"{k:+.4f}*{n}" for k, n in zip(model_cisty.coef_, kombinace)]
+                            rovnice_ciste = f"={model_cisty.intercept_:.4f} " + " ".join(casti_ciste)
+                            
+                            vysledky.append({
+                                "Skupina": f"{nazev_segmentu} (BEZ EXTRÉMŮ)",
+                                "R² (Spolehlivost)": r2_cisty,
+                                "Odstraněno extrémů": pocet_outlieru,
+                                "Počet dat": len(df_ciste),
+                                "Parametry": ", ".join(kombinace),
+                                "Rovnice pro Excel": rovnice_ciste
+                            })
+
+        # --- 1. Zkoumáme celek ---
+        analyzuj_segment(df, "Celý dataset (Všechna data)")
+
+        # --- 2. Zkoumáme dynamické rozdělení (33%, 50%, 66%) ---
+        percentily = [33, 50, 66]
         
-        # Nastavení hezkého formátování tabulky ve Streamlitu
-        st.dataframe(
-            df_vysledky.style.format({"Spolehlivost (R²)": "{:.4f}"}),
-            use_container_width=True,
-            height=400
-        )
-        
-        # Zobrazení úplně té nejlepší rovnice hezky velkým písmem
-        st.markdown("### 🔥 Absolutní vítěz:")
-        nejlepsi = df_vysledky.iloc[0]
-        st.info(f"**R² = {nejlepsi['Spolehlivost (R²)']:.4f}**")
-        st.code(nejlepsi['Přesná rovnice'], language="excel")
+        for f in features:
+            for p in percentily:
+                hrana = np.percentile(df[f], p)
+                
+                df_spodni = df[df[f] <= hrana]
+                df_horni = df[df[f] > hrana]
+                
+                # Aby nám nezkoumal zbytečně duplicity, pokud percentil trefí to samé číslo
+                analyzuj_segment(df_spodni, f"Když {f} <= {hrana:.2f} (Spodní {p} %)")
+                if p != 50: # (Horní část u 50% je stejná, stačí pípnutí na 66% a 33%)
+                    analyzuj_segment(df_horni, f"Když {f} > {hrana:.2f} (Horní {100-p} %)")
+
+        # --- ZOBRAZENÍ VÝSLEDKŮ ---
+        if vysledky:
+            df_vysledky = pd.DataFrame(vysledky)
+            # Filtrujeme dokonalé nesmysly a řadíme
+            df_vysledky = df_vysledky[df_vysledky["R² (Spolehlivost)"] < 1.0] 
+            
+            # Odstraníme úplné duplikáty výsledků, pokud se řezal dataset přesně na stejném místě
+            df_vysledky = df_vysledky.drop_duplicates(subset=["R² (Spolehlivost)", "Parametry"])
+            
+            df_vysledky = df_vysledky.sort_values(by="R² (Spolehlivost)", ascending=False).reset_index(drop=True)
+            
+            st.subheader("🏆 Nalezené korelace (vč. detekce odlehlých hodnot)")
+            st.dataframe(
+                df_vysledky.style.format({"R² (Spolehlivost)": "{:.4f}"}),
+                use_container_width=True,
+                height=600
+            )
+            
+            st.markdown("### 🔥 Nejluxusnější nalezená vazba:")
+            nejlepsi = df_vysledky.iloc[0]
+            st.success(f"Absolutně nejlepší výsledek je ve skupině: **{nejlepsi['Skupina']}**")
+            
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                st.metric("Spolehlivost (R²)", f"{nejlepsi['R² (Spolehlivost)']:.4f}")
+            with col_b:
+                st.metric("Analyzováno vzorků", int(nejlepsi['Počet dat']))
+            with col_c:
+                st.metric("Zahozeno extrémů", int(nejlepsi['Odstraněno extrémů']))
+                
+            st.code(nejlepsi['Rovnice pro Excel'], language="excel")
